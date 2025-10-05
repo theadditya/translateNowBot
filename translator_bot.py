@@ -30,8 +30,8 @@ def start(update: Update, context: CallbackContext):
     welcome_text = (
         "👋 **Welcome to the On-Demand Translator Bot!**\n\n"
         "**Group Chat Mode:**\n"
-        "To translate any message, simply **reply** to it with the command `/translate <lang_code>`.\n"
-        "  *Example:* Reply to a message with `/translate en` to translate it to English.\n\n"
+        "To translate any message, simply **reply** to it with the command `/translatenow <lang_code>`.\n"
+        "  *Example:* Reply to a message with `/translatenow en` to translate it to English.\n\n"
         "**Private Chat Mode:**\n"
         "Send me a message directly using the format `lang_code: your text` to get an instant translation.\n"
         "  *Example:* `fr: Hello, how are you?`\n\n"
@@ -91,7 +91,7 @@ def direct_translate(update: Update, context: CallbackContext):
 
 # Handler for the /translate command used as a reply in groups
 def translate_command_reply(update: Update, context: CallbackContext):
-    """Translates a message when a user replies with /translate <lang_code>."""
+    """Translates a message when a user replies with /translatenow <lang_code>."""
     global translator
     
     original_message = update.message.reply_to_message
@@ -100,7 +100,7 @@ def translate_command_reply(update: Update, context: CallbackContext):
         return
 
     if not context.args:
-        update.message.reply_text("Please provide a language code after the command. Example: `/translate en`")
+        update.message.reply_text("Please provide a language code after the command. Example: `/translatenow en`")
         return
 
     target_lang = context.args[0].lower()
@@ -148,7 +148,7 @@ def main():
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("languages", list_languages))
-    dispatcher.add_handler(CommandHandler("translate", translate_command_reply, filters=Filters.chat_type.groups))
+    dispatcher.add_handler(CommandHandler("translatenow", translate_command_reply, filters=Filters.chat_type.groups))
 
     dispatcher.add_handler(MessageHandler(
         Filters.text & ~Filters.command & Filters.chat_type.private,
@@ -162,6 +162,5 @@ def main():
 
 if __name__ == '__main__':
     main()
-
 
 
