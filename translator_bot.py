@@ -1,7 +1,7 @@
 import logging
 import os
 from googletrans import Translator, LANGUAGES
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, PicklePersistence
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from telegram import Update, ParseMode
 
 # --- Configuration ---
@@ -28,12 +28,14 @@ except Exception as e:
 def start(update: Update, context: CallbackContext):
     """Sends a welcome message with updated instructions."""
     welcome_text = (
-        "👋 **Welcome to the Personal Translator Bot!**\n\n"
-        "This bot can automatically translate group messages into your preferred language.\n\n"
-        "**Available Commands:**\n"
-        "• `/setlang <lang_code>` - Set your preferred language. All messages not in your language will be translated for you.\n"
-        "  *Example:* `/setlang es`\n\n"
-        "• `/clearlang` - Stop receiving automatic translations.\n\n"
+        "👋 **Welcome to the On-Demand Translator Bot!**\n\n"
+        "**Group Chat Mode:**\n"
+        "To translate any message, simply **reply** to it with the language code you want.\n"
+        "  *Example:* Reply to a message with `en` to translate it to English.\n\n"
+        "**Private Chat Mode:**\n"
+        "Send me a message directly using the format `lang_code: your text` to get an instant translation.\n"
+        "  *Example:* `fr: Hello, how are you?`\n\n"
+        "**General Commands:**\n"
         "• `/languages` - See the list of all available language codes."
     )
     update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN)
@@ -47,79 +49,85 @@ def list_languages(update: Update, context: CallbackContext):
         chunk = lang_list[i:i + chunk_size]
         update.message.reply_text("\n".join(chunk), parse_mode=ParseMode.MARKDOWN)
 
-# Command to set a user's preferred language
-def set_language(update: Update, context: CallbackContext):
-    """Saves the user's preferred language preference."""
-    user_id = update.effective_user.id
-    if not context.args:
-        update.message.reply_text("Please provide a language code. Example: `/setlang en`")
+# Handler for direct translation in private chat
+def direct_translate(update: Update, context: CallbackContext):
+    """Translates a message sent directly to the bot in 'lang: text' format."""
+    global translator
+    user_text = update.message.text
+    
+    if ':' not in user_text:
+        update.message.reply_text(
+            "In a private chat, please use the format `lang_code: your text` to translate.\n"
+            "*Example:* `de: Hello, how are you?`",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
 
-    lang_code = context.args[0].lower()
+    parts = user_text.split(':', 1)
+    if len(parts) < 2 or not parts[1].strip():
+        update.message.reply_text("Please provide some text after the language code.")
+        return
+
+    lang_code = parts[0].strip().lower()
+    text_to_translate = parts[1].strip()
+
     if lang_code not in LANGUAGES:
         update.message.reply_text(f"'{lang_code}' is not a valid language code. Use /languages to see the list.")
         return
-    
-    # Initialize the user preferences dictionary if it doesn't exist
-    if 'user_prefs' not in context.chat_data:
-        context.chat_data['user_prefs'] = {}
-    
-    context.chat_data['user_prefs'][user_id] = lang_code
-    language_name = LANGUAGES[lang_code].capitalize()
-    update.message.reply_text(f"Your preferred language has been set to **{language_name}**.", parse_mode=ParseMode.MARKDOWN)
-
-# Command to clear a user's language preference
-def clear_language(update: Update, context: CallbackContext):
-    """Removes the user's language preference."""
-    user_id = update.effective_user.id
-    if 'user_prefs' in context.chat_data and user_id in context.chat_data['user_prefs']:
-        del context.chat_data['user_prefs'][user_id]
-        update.message.reply_text("Your language preference has been cleared. You will no longer receive automatic translations.")
-    else:
-        update.message.reply_text("You don't have a preferred language set.")
-
-# Main handler for automatic translation of group messages
-def auto_translate_group_messages(update: Update, context: CallbackContext):
-    """Auto-translates messages for users with set preferences."""
-    global translator
-    message = update.message
-    
-    # Ignore messages that are too short or have no text
-    if not message.text or len(message.text) < 3:
-        return
-
-    # Get user preferences for the current chat
-    user_prefs = context.chat_data.get('user_prefs', {})
-    if not user_prefs:
-        return
 
     try:
-        detected = translator.detect(message.text)
-        source_lang = detected.lang
-        
-        translations_to_post = []
-        # Keep track of languages we've already translated to, to avoid duplicates
-        processed_langs = {source_lang}
+        translated = translator.translate(text_to_translate, dest=lang_code)
+        detected_lang_code = translated.src
+        detected_lang_name = LANGUAGES.get(detected_lang_code, "Unknown").capitalize()
 
-        for user_id, target_lang in user_prefs.items():
-            # Translate if the target language is different and not already processed
-            if target_lang != source_lang and target_lang not in processed_langs:
-                translated = translator.translate(message.text, dest=target_lang)
-                lang_name = LANGUAGES[target_lang].capitalize()
-                translations_to_post.append(f"**{lang_name}**:\n`{translated.text}`")
-                processed_langs.add(target_lang)
+        response = (
+            f"Translated from **{detected_lang_name}** to **{LANGUAGES[lang_code].capitalize()}**:\n\n"
+            f"`{translated.text}`"
+        )
+        update.message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error during direct translation: {e}")
+        update.message.reply_text("Sorry, an error occurred during translation.")
+
+# Handler for on-demand translation in group chats via reply
+def reply_translate(update: Update, context: CallbackContext):
+    """Translates the replied-to message."""
+    global translator
+    
+    original_message = update.message.reply_to_message
+    # The text of the new message is the target language
+    target_lang = update.message.text.strip().lower()
+    
+    # Check if the command is a valid language code
+    if target_lang not in LANGUAGES:
+        # If it's not a language code, we assume it's a regular reply and do nothing.
+        return
+
+    # Check if there is text in the original message to translate
+    if not original_message.text:
+        return
         
-        if translations_to_post:
-            full_translation_text = "\n\n".join(translations_to_post)
-            # Reply to the original message with all translations
-            message.reply_text(full_translation_text, parse_mode=ParseMode.MARKDOWN)
+    try:
+        translated = translator.translate(original_message.text, dest=target_lang)
+        detected_lang_code = translated.src
+        detected_lang_name = LANGUAGES.get(detected_lang_code, "Unknown").capitalize()
+
+        response = (
+            f"Translated from **{detected_lang_name}** to **{LANGUAGES[target_lang].capitalize()}**:\n\n"
+            f"`{translated.text}`"
+        )
+        # Reply to the original message, not the command
+        original_message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
+
+        # Delete the command message (e.g., the user's "en" reply) to keep the chat clean
+        context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
 
     except Exception as e:
-        logger.error(f"Could not auto-translate message: {e}")
+        logger.error(f"Could not perform reply-translate: {e}")
 
 # Main function to start the bot
 def main():
-    """Start the bot with persistence."""
+    """Start the bot."""
     if not TELEGRAM_TOKEN:
         print("FATAL: Telegram token not found. Please set the TELEGRAM_TOKEN environment variable.")
         return
@@ -128,22 +136,22 @@ def main():
         print("FATAL: Translator was not initialized. Bot cannot start.")
         return
         
-    # Create a persistence object to save user data
-    persistence = PicklePersistence(filename='bot_data')
-
-    updater = Updater(TELEGRAM_TOKEN, use_context=True, persistence=persistence)
+    updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dispatcher = updater.dispatcher
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("languages", list_languages))
-    dispatcher.add_handler(CommandHandler("setlang", set_language))
-    dispatcher.add_handler(CommandHandler("clearlang", clear_language))
 
-    # Add the handler for automatic translations in groups
-    # It will only trigger for text messages that are not commands in a group chat
+    # Handler for on-demand translations in GROUPS via reply
     dispatcher.add_handler(MessageHandler(
-        Filters.text & ~Filters.command & Filters.chat_type.groups,
-        auto_translate_group_messages
+        Filters.reply & Filters.text & ~Filters.command & Filters.chat_type.groups,
+        reply_translate
+    ))
+    
+    # Handler for direct translations in PRIVATE CHAT
+    dispatcher.add_handler(MessageHandler(
+        Filters.text & ~Filters.command & Filters.chat_type.private,
+        direct_translate
     ))
     
     print("Starting bot polling...")
