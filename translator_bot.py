@@ -30,8 +30,8 @@ def start(update: Update, context: CallbackContext):
     welcome_text = (
         "👋 **Welcome to the On-Demand Translator Bot!**\n\n"
         "**Group Chat Mode:**\n"
-        "To translate any message, simply **reply** to it with the language code you want.\n"
-        "  *Example:* Reply to a message with `en` to translate it to English.\n\n"
+        "To translate any message, simply **reply** to it with the command `/translate <lang_code>`.\n"
+        "  *Example:* Reply to a message with `/translate en` to translate it to English.\n\n"
         "**Private Chat Mode:**\n"
         "Send me a message directly using the format `lang_code: your text` to get an instant translation.\n"
         "  *Example:* `fr: Hello, how are you?`\n\n"
@@ -89,23 +89,27 @@ def direct_translate(update: Update, context: CallbackContext):
         logger.error(f"Error during direct translation: {e}")
         update.message.reply_text("Sorry, an error occurred during translation.")
 
-# Handler for on-demand translation in group chats via reply
-def reply_translate(update: Update, context: CallbackContext):
-    """Translates the replied-to message."""
+# Handler for the /translate command used as a reply in groups
+def translate_command_reply(update: Update, context: CallbackContext):
+    """Translates a message when a user replies with /translate <lang_code>."""
     global translator
     
     original_message = update.message.reply_to_message
-    # The text of the new message is the target language
-    target_lang = update.message.text.strip().lower()
-    
-    # Check if the command is a valid language code
-    if target_lang not in LANGUAGES:
-        # If it's not a language code, we assume it's a regular reply and do nothing.
+    if not original_message:
+        update.message.reply_text("Please use this command as a reply to the message you want to translate.")
         return
 
-    # Check if there is text in the original message to translate
-    if not original_message.text:
+    if not context.args:
+        update.message.reply_text("Please provide a language code after the command. Example: `/translate en`")
         return
+
+    target_lang = context.args[0].lower()
+    if target_lang not in LANGUAGES:
+        update.message.reply_text(f"'{target_lang}' is not a valid language code. Use /languages to see the list.")
+        return
+
+    if not original_message.text:
+        return # Don't try to translate messages without text
         
     try:
         translated = translator.translate(original_message.text, dest=target_lang)
@@ -116,14 +120,17 @@ def reply_translate(update: Update, context: CallbackContext):
             f"Translated from **{detected_lang_name}** to **{LANGUAGES[target_lang].capitalize()}**:\n\n"
             f"`{translated.text}`"
         )
-        # Reply to the original message, not the command
         original_message.reply_text(response, parse_mode=ParseMode.MARKDOWN)
 
-        # Delete the command message (e.g., the user's "en" reply) to keep the chat clean
-        context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        # Safely attempt to delete the command message
+        try:
+            context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        except Exception as e:
+            logger.warning(f"Could not delete message. Is the bot an admin? Error: {e}")
 
     except Exception as e:
-        logger.error(f"Could not perform reply-translate: {e}")
+        logger.error(f"Could not perform reply-translate command: {e}")
+        update.message.reply_text("Sorry, an error occurred during translation.", quote=False)
 
 # Main function to start the bot
 def main():
@@ -141,14 +148,8 @@ def main():
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("languages", list_languages))
+    dispatcher.add_handler(CommandHandler("translate", translate_command_reply, filters=Filters.chat_type.groups))
 
-    # Handler for on-demand translations in GROUPS via reply
-    dispatcher.add_handler(MessageHandler(
-        Filters.reply & Filters.text & ~Filters.command & Filters.chat_type.groups,
-        reply_translate
-    ))
-    
-    # Handler for direct translations in PRIVATE CHAT
     dispatcher.add_handler(MessageHandler(
         Filters.text & ~Filters.command & Filters.chat_type.private,
         direct_translate
@@ -161,4 +162,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
 
