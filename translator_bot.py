@@ -1,12 +1,12 @@
 import logging
-import os # Import the 'os' module
+import os
+import re
 from googletrans import Translator, LANGUAGES
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from telegram import Update
 
 # --- Configuration ---
-# We will get the token from an environment variable.
-# This is much more secure and flexible for deployment.
+# Get the token from an environment variable for secure deployment.
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
 # --- Logging Setup ---
@@ -27,14 +27,14 @@ except Exception as e:
 
 # Handler for the /start command
 def start(update: Update, context: CallbackContext):
-    """Sends a welcome message when the /start command is issued."""
+    """Sends a welcome message with updated instructions."""
     welcome_text = (
         "👋 Hello! I am your friendly translation bot.\n\n"
-        "Here's how to use me:\n\n"
-        "1.  **Direct Translation:** Just send me any text and I will translate it to English by default.\n\n"
-        "2.  **Translate to a Specific Language:** Use the format `lang_code: your text`.\n"
+        "I only translate messages when you ask me to. Here's how:\n\n"
+        "1.  **Translate Your Own Text:** Send a message using the format `lang_code: your text`.\n"
         "    *Example:* `es: Hello, how are you?`\n\n"
-        "3.  **Reply to Translate:** In a group, reply to any message with a language code (e.g., `en`, `hi`, `fr`) and I will translate that message for you.\n\n"
+        "2.  **Translate Someone Else's Message:** In a group, reply to any message with just the language code you want to translate it to.\n"
+        "    *Example Reply:* `en`\n\n"
         "Use the /languages command to see a list of all supported language codes."
     )
     update.message.reply_text(welcome_text)
@@ -49,13 +49,15 @@ def list_languages(update: Update, context: CallbackContext):
         chunk = lang_list[i:i + chunk_size]
         update.message.reply_text("\n".join(chunk), parse_mode="Markdown")
 
-# Main translation logic
-def translate_text(update: Update, context: CallbackContext):
-    """Detects and translates user-provided text."""
+# Main translation logic for explicit triggers
+def handle_translation_request(update: Update, context: CallbackContext):
+    """Translates text based on a reply or a specific format."""
     global translator
     
+    # Case 1: The user replied to a message to translate it.
     if update.message.reply_to_message:
         original_message = update.message.reply_to_message.text
+        # The reply text should be the target language code.
         target_lang = update.message.text.lower().strip()
 
         if target_lang in LANGUAGES:
@@ -73,36 +75,33 @@ def translate_text(update: Update, context: CallbackContext):
             except Exception as e:
                 logger.error(f"Error during reply translation: {e}")
                 update.message.reply_text("Sorry, I couldn't translate that message.")
+        # If the reply text is not a valid language code, the bot does nothing.
         return
 
+    # Case 2: The user sent a message in the format "lang_code: text".
     user_text = update.message.text
-    target_lang = 'en'
+    parts = user_text.split(':', 1)
+    lang_code = parts[0].strip().lower()
+    text_to_translate = parts[1].strip()
 
-    if ':' in user_text:
-        parts = user_text.split(':', 1)
-        lang_code = parts[0].strip().lower()
-        if lang_code in LANGUAGES:
-            target_lang = lang_code
-            user_text = parts[1].strip()
-
-    if not user_text:
-        update.message.reply_text("Please provide some text to translate.")
+    if not text_to_translate:
+        update.message.reply_text("Please provide some text after the language code to translate.")
         return
 
     try:
-        translated = translator.translate(user_text, dest=target_lang)
+        translated = translator.translate(text_to_translate, dest=lang_code)
         detected_lang_code = translated.src
         detected_lang_name = LANGUAGES.get(detected_lang_code, "Unknown").capitalize()
 
         response = (
-            f"Translated from **{detected_lang_name}** to **{LANGUAGES[target_lang].capitalize()}**:\n\n"
+            f"Translated from **{detected_lang_name}** to **{LANGUAGES[lang_code].capitalize()}**:\n\n"
             f"`{translated.text}`"
         )
         update.message.reply_text(response, parse_mode="Markdown")
 
     except Exception as e:
-        logger.error(f"Error during translation: {e}")
-        update.message.reply_text("Sorry, an error occurred while trying to translate.")
+        logger.error(f"Error during direct translation: {e}")
+        update.message.reply_text("Sorry, an error occurred. Make sure you are using a valid language code.")
 
 # Main function to start the bot
 def main():
@@ -120,7 +119,11 @@ def main():
 
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("languages", list_languages))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, translate_text))
+
+    # This new filter triggers the translation handler ONLY for replies or messages in the "lang: text" format.
+    # It will ignore all other messages.
+    translation_filter = (Filters.reply | Filters.regex(r'^[a-zA-Z-]{2,7}:.*')) & Filters.text & ~Filters.command
+    dispatcher.add_handler(MessageHandler(translation_filter, handle_translation_request))
     
     print("Starting bot polling...")
     updater.start_polling()
