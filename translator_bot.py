@@ -1,22 +1,21 @@
 import logging
-import os
+import os # Import the 'os' module
 from googletrans import Translator, LANGUAGES
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from telegram import Update
 
 # --- Configuration ---
-# IMPORTANT: Make sure this is your real bot token.
-TELEGRAM_TOKEN = "8288461568:AAHrQ9X8GOOG_PVZaDeMh-RZlR6gi3D8sqo" # Replace with your token
+# We will get the token from an environment variable.
+# This is much more secure and flexible for deployment.
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
 # --- Logging Setup ---
-# Enable logging to see errors and bot activity
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # --- Bot Logic ---
-# Global translator object
 translator = None
 try:
     print("Initializing translator...")
@@ -24,9 +23,7 @@ try:
     print("Translator initialized successfully.")
 except Exception as e:
     print(f"FATAL: Could not initialize Translator. Error: {e}")
-    # We exit here because the bot cannot function without the translator
     exit()
-
 
 # Handler for the /start command
 def start(update: Update, context: CallbackContext):
@@ -46,10 +43,8 @@ def start(update: Update, context: CallbackContext):
 def list_languages(update: Update, context: CallbackContext):
     """Sends a list of supported language codes."""
     message = "Here are the supported language codes:\n"
-    # Create a two-column list of languages
     lang_list = [f"`{code}`: {name.capitalize()}" for code, name in LANGUAGES.items()]
-    # Telegram has a message length limit, so we send it in chunks if needed
-    chunk_size = 25 # number of languages per message
+    chunk_size = 25
     for i in range(0, len(lang_list), chunk_size):
         chunk = lang_list[i:i + chunk_size]
         update.message.reply_text("\n".join(chunk), parse_mode="Markdown")
@@ -59,7 +54,6 @@ def translate_text(update: Update, context: CallbackContext):
     """Detects and translates user-provided text."""
     global translator
     
-    # Check if the message is a reply - this is for group translations
     if update.message.reply_to_message:
         original_message = update.message.reply_to_message.text
         target_lang = update.message.text.lower().strip()
@@ -79,13 +73,11 @@ def translate_text(update: Update, context: CallbackContext):
             except Exception as e:
                 logger.error(f"Error during reply translation: {e}")
                 update.message.reply_text("Sorry, I couldn't translate that message.")
-        return # Stop further processing
+        return
 
-    # This is for direct messages or non-reply messages in groups
     user_text = update.message.text
-    target_lang = 'en'  # Default language is English
+    target_lang = 'en'
 
-    # Check for custom language format `lang_code: text`
     if ':' in user_text:
         parts = user_text.split(':', 1)
         lang_code = parts[0].strip().lower()
@@ -116,33 +108,23 @@ def translate_text(update: Update, context: CallbackContext):
 def main():
     """Start the bot."""
     if not TELEGRAM_TOKEN:
-        print("FATAL: Telegram token not found. Please set the TELEGRAM_TOKEN variable.")
+        print("FATAL: Telegram token not found in environment variables. Please set the TELEGRAM_TOKEN.")
         return
         
     if not translator:
         print("FATAL: Translator was not initialized. Bot cannot start.")
         return
 
-    # Create the Updater and pass it your bot's token.
     updater = Updater(TELEGRAM_TOKEN, use_context=True)
-
-    # Get the dispatcher to register handlers
     dispatcher = updater.dispatcher
 
-    # Register command handlers
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("languages", list_languages))
-
-    # Register message handler for translation
-    # This handles non-command text messages
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, translate_text))
     
-    # Start the Bot
     print("Starting bot polling...")
     updater.start_polling()
     print("Bot is running...")
-
-    # Run the bot until you press Ctrl-C
     updater.idle()
 
 if __name__ == '__main__':
